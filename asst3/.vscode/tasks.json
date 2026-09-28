@@ -1,0 +1,36 @@
+{
+    "version": "2.0.0",
+    "tasks": [
+        {
+            // Builds asst3. HOMEBREW_PREFIX points at the locally vendored
+            // GLFW/GLEW prefix (see ~/cs1750-deps), because Homebrew is not
+            // installed on this machine. Remove the "env" block below if you
+            // later install glfw and glew with Homebrew.
+            "label": "make",
+            "type": "shell",
+            "command": "make",
+            "options": {
+                "cwd": "${workspaceFolder}",
+                "env": {
+                    "HOMEBREW_PREFIX": "${env:HOME}/cs1750-deps/prefix"
+                }
+            },
+            "group": {
+                "kind": "build",
+                "isDefault": true
+            },
+            "problemMatcher": [
+                "$gcc"
+            ]
+        },
+        {
+            "label": "make clean",
+            "type": "shell",
+            "command": "make clean",
+            "options": {
+                "cwd": "${workspaceFolder}"
+            },
+            "problemMatcher": []
+        }
+    ]
+}
