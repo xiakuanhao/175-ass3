@@ -270,15 +270,13 @@ inline Matrix4 normalMatrix(const Matrix4 &m) { // get the normal matrix (v332)
 }
 
 inline Matrix4 transFact(const Matrix4 &m) {
-    // TODO
-    // Currently return a dummy identity matrix, you need to change this
-    return Matrix4();
+    return Matrix4::makeTranslation(Cvec3(m(0, 3), m(1, 3), m(2, 3)));
 }
 
 inline Matrix4 linFact(const Matrix4 &m) {
-    // TODO
-    // Currently return a dummy identity matrix, you need to change this
-    return Matrix4();
+    Matrix4 r = m;
+    r(0, 3) = r(1, 3) = r(2, 3) = 0;
+    return r;
 }
 
 #endif

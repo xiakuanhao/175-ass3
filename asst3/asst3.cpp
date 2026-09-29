@@ -173,9 +173,17 @@ static shared_ptr<Geometry> g_ground, g_cube;
 static const Cvec3 g_light1(2.0, 3.0, 14.0),
     g_light2(-2, -3.0, -5.0); // define two lights positions in world space
 static Matrix4 g_skyRbt = Matrix4::makeTranslation(Cvec3(0.0, 0.25, 4.0));
-static Matrix4 g_objectRbt[1] = {Matrix4::makeTranslation(
-    Cvec3(0, 0, 0))}; // currently only 1 obj is defined
-static Cvec3f g_objectColors[1] = {Cvec3f(1, 0, 0)};
+static const int g_numObjects = 2;
+static Matrix4 g_objectRbt[g_numObjects] = {
+    Matrix4::makeTranslation(Cvec3(-1, 0, 0)),
+    Matrix4::makeTranslation(Cvec3(1, 0, 0))};
+static Cvec3f g_objectColors[g_numObjects] = {Cvec3f(1, 0, 0),
+                                              Cvec3f(0, 0, 1)};
+
+static int g_viewIndex = 0;
+static int g_objIndex = 0;
+static bool g_worldSky = true;
+static const char *const g_frameNames[3] = {"sky camera", "cube 1", "cube 2"};
 
 ///////////////// END OF G L O B A L S
 /////////////////////////////////////////////////////
@@ -236,6 +244,19 @@ static void updateFrustFovY() {
     }
 }
 
+static Matrix4 &getRbt(const int i) {
+    return i == 0 ? g_skyRbt : g_objectRbt[i - 1];
+}
+
+static Matrix4 makeMixedFrame(const Matrix4 &o, const Matrix4 &e) {
+    return transFact(o) * linFact(e);
+}
+
+static Matrix4 doQtoOwrtA(const Matrix4 &q, const Matrix4 &o,
+                          const Matrix4 &a) {
+    return a * q * inv(a) * o;
+}
+
 static Matrix4 makeProjectionMatrix() {
     return Matrix4::makeProjection(
         g_frustFovY, g_windowWidth / static_cast<double>(g_windowHeight),
@@ -250,8 +271,7 @@ static void drawStuff() {
     const Matrix4 projmat = makeProjectionMatrix();
     sendProjectionMatrix(curSS, projmat);
 
-    // use the skyRbt as the eyeRbt
-    const Matrix4 eyeRbt = g_skyRbt;
+    const Matrix4 eyeRbt = getRbt(g_viewIndex);
     const Matrix4 invEyeRbt = inv(eyeRbt);
 
     const Cvec3 eyeLight1 = Cvec3(
@@ -273,12 +293,14 @@ static void drawStuff() {
 
     // draw cubes
     // ==========
-    MVM = invEyeRbt * g_objectRbt[0];
-    NMVM = normalMatrix(MVM);
-    sendModelViewNormalMatrix(curSS, MVM, NMVM);
-    safe_glUniform3f(curSS.h_uColor, g_objectColors[0][0], g_objectColors[0][1],
-                     g_objectColors[0][2]);
-    g_cube->draw(curSS);
+    for (int i = 0; i < g_numObjects; ++i) {
+        MVM = invEyeRbt * g_objectRbt[i];
+        NMVM = normalMatrix(MVM);
+        sendModelViewNormalMatrix(curSS, MVM, NMVM);
+        safe_glUniform3f(curSS.h_uColor, g_objectColors[i][0],
+                         g_objectColors[i][1], g_objectColors[i][2]);
+        g_cube->draw(curSS);
+    }
 }
 
 static void display() {
@@ -308,23 +330,38 @@ static void motion(GLFWwindow *window, double x, double y) {
     const double dx = x - g_mouseClickX;
     const double dy = g_windowHeight - y - 1 - g_mouseClickY;
 
-    Matrix4 m;
+    Matrix4 rotX, rotY, trans;
     if (g_mouseLClickButton && !g_mouseRClickButton &&
         !g_spaceDown) { // left button down?
-        m = Matrix4::makeXRotation(-dy) * Matrix4::makeYRotation(dx);
+        rotX = Matrix4::makeXRotation(-dy);
+        rotY = Matrix4::makeYRotation(dx);
     } else if (g_mouseRClickButton &&
                !g_mouseLClickButton) { // right button down?
-        m = Matrix4::makeTranslation(Cvec3(dx, dy, 0) * 0.01);
+        trans = Matrix4::makeTranslation(Cvec3(dx, dy, 0) * 0.01);
     } else if (g_mouseMClickButton ||
                (g_mouseLClickButton && g_mouseRClickButton) ||
                (g_mouseLClickButton && !g_mouseRClickButton &&
                 g_spaceDown)) { // middle or (left and right, or left + space)
                                 // button down?
-        m = Matrix4::makeTranslation(Cvec3(0, 0, -dy) * 0.01);
+        trans = Matrix4::makeTranslation(Cvec3(0, 0, -dy) * 0.01);
     }
 
-    if (g_mouseClickDown) {
-        g_objectRbt[0] *= m; // Simply right-multiply is WRONG
+    if (g_mouseClickDown && !(g_objIndex == 0 && g_viewIndex != 0)) {
+        if (g_objIndex == g_viewIndex) {
+            rotX = inv(rotX);
+            rotY = inv(rotY);
+            trans = inv(trans);
+        }
+        Matrix4 &obj = getRbt(g_objIndex);
+        if (g_objIndex == 0) {
+            obj = doQtoOwrtA(rotY, obj,
+                             g_worldSky ? Matrix4() : transFact(obj));
+            obj = doQtoOwrtA(rotX, obj, g_worldSky ? linFact(obj) : obj);
+            obj = doQtoOwrtA(trans, obj, obj);
+        } else {
+            const Matrix4 a = makeMixedFrame(obj, getRbt(g_viewIndex));
+            obj = doQtoOwrtA(trans * rotX * rotY, obj, a);
+        }
     }
 
     g_mouseClickX = x;
@@ -362,6 +399,7 @@ static void keyboard(GLFWwindow* window, int key, int scancode, int action, int 
                  << "f\t\tToggle flat shading on/off.\n"
                  << "o\t\tCycle object to edit\n"
                  << "v\t\tCycle view\n"
+                 << "m\t\tToggle sky manipulation mode (orbit/ego motion)\n"
                  << "drag left mouse to rotate\n"
                  << endl;
             break;
@@ -371,6 +409,25 @@ static void keyboard(GLFWwindow* window, int key, int scancode, int action, int 
             break;
         case GLFW_KEY_F:
             g_activeShader = (g_activeShader + 1) % g_numShaders;
+            break;
+        case GLFW_KEY_V:
+            g_viewIndex = (g_viewIndex + 1) % 3;
+            cout << "Current view: " << g_frameNames[g_viewIndex] << endl;
+            break;
+        case GLFW_KEY_O:
+            g_objIndex = (g_objIndex + 1) % 3;
+            cout << "Current object: " << g_frameNames[g_objIndex] << endl;
+            break;
+        case GLFW_KEY_M:
+            if (g_objIndex == 0 && g_viewIndex == 0) {
+                g_worldSky = !g_worldSky;
+                cout << "Sky camera mode: "
+                     << (g_worldSky ? "orbit" : "ego motion") << endl;
+            } else {
+                cout << "Mode switching only applies when manipulating the "
+                        "sky camera from the sky view"
+                     << endl;
+            }
             break;
         case GLFW_KEY_SPACE:
             g_spaceDown = true;
